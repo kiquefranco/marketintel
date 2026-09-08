@@ -377,6 +377,31 @@ def _runners_html(runners: list[dict] | None) -> str:
     return "".join(rows)
 
 
+def _article_meta_lookup(articles: list[dict] | None):
+    """Index the source DB rows, and return `lookup(story) -> meta` for the digests.
+
+    The synthesized story carries no Captured/Published date, source or area — the LLM
+    does not produce them — so each story is matched back to its DB row by normalized
+    URL, falling back to an exact lowercased title, and an unmatched story gets {}.
+    Both digest renderers built this index and ran this lookup with identical code.
+    """
+    by_url, by_title = {}, {}
+    for a in articles or []:
+        meta = {"fetched": a.get("fetched"), "published": a.get("published"),
+                "source": a.get("source"), "area": a.get("area"),
+                "llm_score": a.get("llm_score")}
+        if a.get("url"):
+            by_url[_norm_url(a["url"])] = meta
+        if a.get("title"):
+            by_title[str(a["title"]).strip().lower()] = meta
+
+    def lookup(story: dict) -> dict:
+        return (by_url.get(_norm_url(story.get("url", "")))
+                or by_title.get(str(story.get("title", "")).strip().lower())
+                or {})
+    return lookup
+
+
 def render_digest(stories: list[dict], date_str: str, org_short: str,
                   articles: list[dict] | None = None, top_n: int = 5,
                   runners: list[dict] | None = None,
@@ -386,22 +411,11 @@ def render_digest(stories: list[dict], date_str: str, org_short: str,
     `articles` are the source DB rows; we match each story to one (by URL, then by
     title) to fill Captured/Published dates that the LLM doesn't produce.
     """
-    articles = articles or []
-    by_url, by_title = {}, {}
-    for a in articles:
-        meta = {"fetched": a.get("fetched"), "published": a.get("published"),
-                "source": a.get("source"), "area": a.get("area"),
-                "llm_score": a.get("llm_score")}
-        if a.get("url"):
-            by_url[_norm_url(a["url"])] = meta
-        if a.get("title"):
-            by_title[str(a["title"]).strip().lower()] = meta
+    meta_for = _article_meta_lookup(articles)
 
     out = [f"Market Intelligence Briefing — {date_str}", ""]
     for s in stories[:top_n]:
-        meta = (by_url.get(_norm_url(s.get("url", "")))
-                or by_title.get(str(s.get("title", "")).strip().lower())
-                or {})
+        meta = meta_for(s)
         captured = _fmt_date(meta.get("fetched"))
         published = _fmt_date(s.get("published") or meta.get("published"))
         src = meta.get("source") or s.get("source", "")
@@ -440,16 +454,7 @@ def render_digest_html(stories: list[dict], date_str: str, org_short: str,
                        runners: list[dict] | None = None,
                        show_consider: bool = True) -> str:
     """HTML version of the digest — same content, with larger article titles."""
-    articles = articles or []
-    by_url, by_title = {}, {}
-    for a in articles:
-        meta = {"fetched": a.get("fetched"), "published": a.get("published"),
-                "source": a.get("source"), "area": a.get("area"),
-                "llm_score": a.get("llm_score")}
-        if a.get("url"):
-            by_url[_norm_url(a["url"])] = meta
-        if a.get("title"):
-            by_title[str(a["title"]).strip().lower()] = meta
+    meta_for = _article_meta_lookup(articles)
 
     parts = [
         '<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;'
@@ -458,9 +463,7 @@ def render_digest_html(stories: list[dict], date_str: str, org_short: str,
         f'Market Intelligence Briefing — {escape(date_str)}</p>',
     ]
     for s in stories[:top_n]:
-        meta = (by_url.get(_norm_url(s.get("url", "")))
-                or by_title.get(str(s.get("title", "")).strip().lower())
-                or {})
+        meta = meta_for(s)
         captured = _fmt_date(meta.get("fetched"))
         published = _fmt_date(s.get("published") or meta.get("published"))
         src = meta.get("source") or s.get("source", "")
