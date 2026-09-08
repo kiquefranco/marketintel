@@ -4,7 +4,28 @@ Every prioritization change made to the Market Intelligence briefing, with what 
 where it lives. Most scoring behavior is in `config/settings.yaml → briefing.relevance_guidance`
 (no code change needed to tune); selection mechanics are in `run_briefing.py` + `config/`.
 
-_Last updated: 2026-07-15._
+_Last updated: 2026-09-08._
+
+---
+
+## 2026-09-08 — no invented addresses
+
+Triggered by the 2026-09-05 briefing: a title-only Florida YIMBY item on construction starting
+at "The Triangle" in Miami's Health District was written up with the street address
+1400 NW 10th Ave. That address is in no source the pipeline held — the item's summary field is
+its own title repeated, and browsing is off, so the model supplied a plausible Health District
+address from prior knowledge.
+
+- **NEW — rule 10 in `briefing.synthesis_style`.** Street addresses, cross-streets, block
+  numbers, parcel locations, distances and adjacency claims are reproduced ONLY when the exact
+  string appears in the item's title, summary, key facts, full text, or research context.
+  Otherwise state the location at the level the source gives it, or "address not disclosed."
+  Prior knowledge, earlier briefings on the same project, and related articles are not sources.
+  A title-only item supports no address at all. Carries the real failure as a worked example.
+- **NEW — same rule hard-coded in `src/output/synthesize.py`'s `what_happened` spec**, so it
+  holds on any path that runs with an empty style guide.
+- Covers all three synthesis call sites (house pass, profile pass, token-overrun retry) — each
+  passes `synthesis_style` through.
 
 ---
 

@@ -642,6 +642,24 @@ briefing:
        The "explore further" line is optional: if there's little to explore, say so plainly
        rather than manufacturing a recommendation.
 
+    10. NEVER SUPPLY AN ADDRESS THE ARTICLE DID NOT STATE. Street addresses, cross-streets,
+       block numbers, parcel locations, and campus locations are the single most common place
+       this briefing has invented facts, because a plausible one is easy to recall for a
+       familiar district. Reproduce an address ONLY if the exact string appears in the item's
+       title, summary, key facts, full text, or research context. If it does not, write the
+       location at the level the source actually gives it ("in Miami's Health District") or
+       say "address not disclosed." This applies to the item's own words only — do NOT fill
+       the gap from prior knowledge of the neighborhood, from an earlier briefing about the
+       same project, or from a related article. A title-only item with no body text supports
+       NO address at all. The same rule governs distances and adjacency claims ("blocks from
+       UHealth Tower," "adjacent to the Miller School campus"): state them only when the
+       source states them.
+       FAILURE THIS RULE EXISTS TO PREVENT (2026-09-05, real): a title-only Florida YIMBY item
+       on construction starting at "The Triangle" in Miami's Health District was written up
+       with the street address 1400 NW 10th Ave, which appeared nowhere in the source. The
+       model supplied a plausible Health District address from prior knowledge. Correct output
+       for that item names the project and the district, and nothing more precise.
+
     WORKED EXAMPLE A — a competitor opens a new ER:
       AVOID: "This expansion signals increased capacity in a growing submarket, which UHealth
         should monitor as it could subtly shift patient access patterns. While direct impact
