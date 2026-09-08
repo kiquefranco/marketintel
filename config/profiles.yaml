@@ -55,6 +55,21 @@ profiles:
     email: "axs9248@miami.edu"
     active: true
 
+  # Added to the strategy briefing 2026-09-08 at the user's request. Name-only, same
+  # treatment as Kique / Jake / Pranav / Aaron. Also added to digest_recipients in
+  # settings.yaml (both lists must change together).
+  - name: "David"
+    title: ""
+    display_name: "David"
+    email: "davidreis@miami.edu"
+    active: true
+
+  - name: "Bri"
+    title: ""
+    display_name: "Bri"
+    email: "bneuburger@med.miami.edu"   # note: med.miami.edu, not miami.edu
+    active: true
+
   # First weighted profile: re-ranks the shared pool toward outpatient network
   # development rather than mirroring the shared briefing.
   # INACTIVE until the email address is filled in and a dry run is reviewed.

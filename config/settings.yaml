@@ -710,6 +710,8 @@ briefing:
       - "jakeherman@miami.edu"
       - "psharma@miami.edu"
       - "axs9248@miami.edu"             # Aaron — added 2026-09-04
+      - "davidreis@miami.edu"          # David — added 2026-09-08
+      - "bneuburger@med.miami.edu"     # Bri — added 2026-09-08 (med.miami.edu domain)
       # CJ (cjvonherrath) removed 2026-09-04 at the user's request. Profile also set
       # active:false in profiles.yaml; address kept here in comment only for restore.
     test:                               # test sends — the S&T testing group (not leadership)
@@ -725,6 +727,8 @@ briefing:
     - "jakeherman@miami.edu"
     - "psharma@miami.edu"
     - "axs9248@miami.edu"
+    - "davidreis@miami.edu"
+    - "bneuburger@med.miami.edu"
 
   # --- Prioritization comparison email (added 2026-09-08) ---
   # A DIAGNOSTIC for the people who tune the scoring, not a briefing: one email showing
