@@ -498,13 +498,32 @@ def _resolve_recipients(settings, spec: str) -> list[str]:
     return [e.strip() for e in spec.split(",") if e.strip()]
 
 
+SMTP_ENV_KEYS = ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "EMAIL_FROM")
+
+
+def _smtp_ready() -> bool:
+    """True when every SMTP secret the sender needs is present in the environment.
+
+    One definition for all four delivery paths (shared digest, name-only profiles,
+    quiet-day note, semantic profiles) so a key added here can never be checked by
+    some of them and not the others.
+    """
+    return all(config.env(k, required=False) for k in SMTP_ENV_KEYS)
+
+
+def _smtp_cfg(recipients: list[str]) -> dict:
+    """The SMTP connection dict emailer.send expects, addressed to `recipients`."""
+    return {"host": config.env("SMTP_HOST"), "port": config.env("SMTP_PORT"),
+            "user": config.env("SMTP_USER"), "password": config.env("SMTP_PASS"),
+            "from": config.env("EMAIL_FROM"), "to": recipients}
+
+
 def _send_html(settings, subject: str, body_html: str, dry_run: bool,
                run_date: str, label: str = "Digest",
                recipients_override: list[str] | None = None) -> bool:
     """Send an HTML email, respecting --dry-run and SMTP readiness. Returns True if sent."""
     recipients = recipients_override or settings["briefing"].get("digest_recipients", [])
-    smtp_ready = all(config.env(k, required=False) for k in
-                     ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "EMAIL_FROM"))
+    smtp_ready = _smtp_ready()
     if dry_run:
         log.info("Dry run: %s saved to data/briefings/ (not sent).", label)
         return False
@@ -514,9 +533,7 @@ def _send_html(settings, subject: str, body_html: str, dry_run: bool,
         return False
     emailer.send(
         body_html, subject,
-        {"host": config.env("SMTP_HOST"), "port": config.env("SMTP_PORT"),
-         "user": config.env("SMTP_USER"), "password": config.env("SMTP_PASS"),
-         "from": config.env("EMAIL_FROM"), "to": recipients},
+        _smtp_cfg(recipients),
         subtype="html",
     )
     log.info("%s emailed to %s", label, ", ".join(recipients))
@@ -539,8 +556,7 @@ def _send_personalized(settings, briefing, date_h, failing, dry_run, run_date, o
         return None
     org_name = settings["org"]["name"]
     subject = f'{settings["briefing"]["subject_prefix"]} — {date_h}'
-    smtp_ready = all(config.env(k, required=False) for k in
-                     ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "EMAIL_FROM"))
+    smtp_ready = _smtp_ready()
     sent_any = False
     for p in profs:
         greeting = p.get("display_name") or p.get("name", "")
@@ -553,10 +569,7 @@ def _send_personalized(settings, briefing, date_h, failing, dry_run, run_date, o
             log.info("Personalized briefing for %s saved%s.", p.get("name"),
                      " (dry run)" if dry_run else " but NOT sent (SMTP not ready / no email)")
             continue
-        emailer.send(html, subject, {
-            "host": config.env("SMTP_HOST"), "port": config.env("SMTP_PORT"),
-            "user": config.env("SMTP_USER"), "password": config.env("SMTP_PASS"),
-            "from": config.env("EMAIL_FROM"), "to": [p["email"]]}, subtype="html")
+        emailer.send(html, subject, _smtp_cfg([p["email"]]), subtype="html")
         log.info("Personalized briefing emailed to %s <%s>", p.get("name"), p["email"])
         sent_any = True
     return sent_any
@@ -581,8 +594,7 @@ def _send_quiet_personalized(settings, date_h, failing, dry_run, run_date, out_d
     if not profs:
         return None
     subject = f'{settings["briefing"]["subject_prefix"]} — {date_h} (quiet day)'
-    smtp_ready = all(config.env(k, required=False) for k in
-                     ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "EMAIL_FROM"))
+    smtp_ready = _smtp_ready()
     sent_any = False
     for p in profs:
         greeting = p.get("display_name") or p.get("name", "")
@@ -595,10 +607,7 @@ def _send_quiet_personalized(settings, date_h, failing, dry_run, run_date, out_d
             log.info("Quiet-day note for %s saved%s.", p.get("name"),
                      " (dry run)" if dry_run else " but NOT sent (SMTP not ready / no email)")
             continue
-        emailer.send(html, subject, {
-            "host": config.env("SMTP_HOST"), "port": config.env("SMTP_PORT"),
-            "user": config.env("SMTP_USER"), "password": config.env("SMTP_PASS"),
-            "from": config.env("EMAIL_FROM"), "to": [p["email"]]}, subtype="html")
+        emailer.send(html, subject, _smtp_cfg([p["email"]]), subtype="html")
         log.info("Quiet-day note emailed to %s <%s>", p.get("name"), p["email"])
         sent_any = True
     return sent_any
@@ -872,8 +881,7 @@ def _send_semantic_profiles(con, cfg, client, use_llm, scored_pool, date_h, dry_
     subject = f'{settings["briefing"]["subject_prefix"]} — {date_h}'
     failing = store.failing_sources(con)
     show_consider = settings["briefing"].get("show_consider_section", True)
-    smtp_ready = all(config.env(k, required=False) for k in
-                     ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "EMAIL_FROM"))
+    smtp_ready = _smtp_ready()
     sent_any = False
 
     for members in groups.values():
@@ -912,10 +920,7 @@ def _send_semantic_profiles(con, cfg, client, use_llm, scored_pool, date_h, dry_
                          len(briefing.get("stories", [])),
                          " (dry run)" if dry_run else " but NOT sent (SMTP not ready / no email)")
                 continue
-            emailer.send(html, subject, {
-                "host": config.env("SMTP_HOST"), "port": config.env("SMTP_PORT"),
-                "user": config.env("SMTP_USER"), "password": config.env("SMTP_PASS"),
-                "from": config.env("EMAIL_FROM"), "to": [p["email"]]}, subtype="html")
+            emailer.send(html, subject, _smtp_cfg([p["email"]]), subtype="html")
             log.info("Profile briefing (%d stories) emailed to %s <%s>",
                      len(briefing.get("stories", [])), p.get("name"), p["email"])
             group_sent = sent_any = True
