@@ -540,6 +540,36 @@ def _send_html(settings, subject: str, body_html: str, dry_run: bool,
     return True
 
 
+def _deliver_to_profiles(profs: list[dict], subject: str, render, dry_run: bool,
+                         run_date: str, out_dir, label: str, detail: str = "") -> bool:
+    """Render, save and send ONE briefing per profile, each with its own greeting.
+
+    The three delivery paths (name-only profiles, quiet-day note, semantic-profile
+    groups) had this loop written out three times. Keeping one copy is what stops the
+    2026-09-04 class of bug, where a branch quietly downgraded everyone to a single
+    greeting-less group email and skipped profiles absent from digest_recipients.
+
+    `render(greeting) -> html` supplies the per-path body. `label`/`detail` reproduce
+    each path's log wording exactly. Returns True if at least one real email was sent,
+    so a caller can gate its own mark_briefed on a real send.
+    """
+    smtp_ready = _smtp_ready()
+    sent_any = False
+    for p in profs:
+        greeting = p.get("display_name") or p.get("name", "")
+        html = render(greeting)
+        tag = (p.get("name", "profile").split() or ["profile"])[0].lower()
+        (out_dir / f"{run_date}_{tag}.html").write_text(html, encoding="utf-8")
+        if dry_run or not smtp_ready or not p.get("email"):
+            log.info("%s for %s saved%s%s.", label, p.get("name"), detail,
+                     " (dry run)" if dry_run else " but NOT sent (SMTP not ready / no email)")
+            continue
+        emailer.send(html, subject, _smtp_cfg([p["email"]]), subtype="html")
+        log.info("%s%s emailed to %s <%s>", label, detail, p.get("name"), p["email"])
+        sent_any = True
+    return sent_any
+
+
 def _send_personalized(settings, briefing, date_h, failing, dry_run, run_date, out_dir,
                        runners=None):
     """Deliver the exec-summary report to each ACTIVE profile with a personal greeting.
@@ -556,23 +586,13 @@ def _send_personalized(settings, briefing, date_h, failing, dry_run, run_date, o
         return None
     org_name = settings["org"]["name"]
     subject = f'{settings["briefing"]["subject_prefix"]} — {date_h}'
-    smtp_ready = _smtp_ready()
-    sent_any = False
-    for p in profs:
-        greeting = p.get("display_name") or p.get("name", "")
-        html = emailer.render_html(briefing, date_h, org_name, failing, greeting=greeting,
-                                   runners=runners,
-                                   show_consider=settings["briefing"].get("show_consider_section", True))
-        tag = (p.get("name", "profile").split() or ["profile"])[0].lower()
-        (out_dir / f"{run_date}_{tag}.html").write_text(html, encoding="utf-8")
-        if dry_run or not smtp_ready or not p.get("email"):
-            log.info("Personalized briefing for %s saved%s.", p.get("name"),
-                     " (dry run)" if dry_run else " but NOT sent (SMTP not ready / no email)")
-            continue
-        emailer.send(html, subject, _smtp_cfg([p["email"]]), subtype="html")
-        log.info("Personalized briefing emailed to %s <%s>", p.get("name"), p["email"])
-        sent_any = True
-    return sent_any
+    show_consider = settings["briefing"].get("show_consider_section", True)
+    return _deliver_to_profiles(
+        profs, subject,
+        lambda greeting: emailer.render_html(briefing, date_h, org_name, failing,
+                                             greeting=greeting, runners=runners,
+                                             show_consider=show_consider),
+        dry_run, run_date, out_dir, "Personalized briefing")
 
 
 def _send_quiet_personalized(settings, date_h, failing, dry_run, run_date, out_dir, runners):
@@ -594,23 +614,12 @@ def _send_quiet_personalized(settings, date_h, failing, dry_run, run_date, out_d
     if not profs:
         return None
     subject = f'{settings["briefing"]["subject_prefix"]} — {date_h} (quiet day)'
-    smtp_ready = _smtp_ready()
-    sent_any = False
-    for p in profs:
-        greeting = p.get("display_name") or p.get("name", "")
-        html = emailer.render_quiet_html(
+    return _deliver_to_profiles(
+        profs, subject,
+        lambda greeting: emailer.render_quiet_html(
             date_h, settings["org"]["name"], settings["briefing"]["lookback_hours"],
-            failing, runners=runners, greeting=greeting)
-        tag = (p.get("name", "profile").split() or ["profile"])[0].lower()
-        (out_dir / f"{run_date}_{tag}.html").write_text(html, encoding="utf-8")
-        if dry_run or not smtp_ready or not p.get("email"):
-            log.info("Quiet-day note for %s saved%s.", p.get("name"),
-                     " (dry run)" if dry_run else " but NOT sent (SMTP not ready / no email)")
-            continue
-        emailer.send(html, subject, _smtp_cfg([p["email"]]), subtype="html")
-        log.info("Quiet-day note emailed to %s <%s>", p.get("name"), p["email"])
-        sent_any = True
-    return sent_any
+            failing, runners=runners, greeting=greeting),
+        dry_run, run_date, out_dir, "Quiet-day note")
 
 
 def prioritize_for_profile(con, cfg, client, profile: dict, scored_pool: list[dict]
@@ -881,7 +890,6 @@ def _send_semantic_profiles(con, cfg, client, use_llm, scored_pool, date_h, dry_
     subject = f'{settings["briefing"]["subject_prefix"]} — {date_h}'
     failing = store.failing_sources(con)
     show_consider = settings["briefing"].get("show_consider_section", True)
-    smtp_ready = _smtp_ready()
     sent_any = False
 
     for members in groups.values():
@@ -907,23 +915,14 @@ def _send_semantic_profiles(con, cfg, client, use_llm, scored_pool, date_h, dry_
         except Exception as exc:
             log.warning("%s: additional-context step skipped (%s)", label, exc)
 
-        group_sent = False
-        for p in members:
-            greeting = p.get("display_name") or p.get("name", "")
-            html = emailer.render_html(briefing, date_h, org_name, failing,
-                                       greeting=greeting, runners=runners,
-                                       show_consider=show_consider)
-            tag = (p.get("name", "profile").split() or ["profile"])[0].lower()
-            (out_dir / f"{run_date}_{tag}.html").write_text(html, encoding="utf-8")
-            if dry_run or not smtp_ready or not p.get("email"):
-                log.info("Profile briefing for %s saved (%d stories)%s.", p.get("name"),
-                         len(briefing.get("stories", [])),
-                         " (dry run)" if dry_run else " but NOT sent (SMTP not ready / no email)")
-                continue
-            emailer.send(html, subject, _smtp_cfg([p["email"]]), subtype="html")
-            log.info("Profile briefing (%d stories) emailed to %s <%s>",
-                     len(briefing.get("stories", [])), p.get("name"), p["email"])
-            group_sent = sent_any = True
+        group_sent = _deliver_to_profiles(
+            members, subject,
+            lambda greeting: emailer.render_html(briefing, date_h, org_name, failing,
+                                                 greeting=greeting, runners=runners,
+                                                 show_consider=show_consider),
+            dry_run, run_date, out_dir, "Profile briefing",
+            detail=f' ({len(briefing.get("stories", []))} stories)')
+        sent_any = sent_any or group_sent
 
         # Consume dedup state for THIS group's stories only once it really went out —
         # same principle as the shared pipeline.
