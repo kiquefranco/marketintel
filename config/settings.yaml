@@ -726,6 +726,26 @@ briefing:
     - "psharma@miami.edu"
     - "axs9248@miami.edu"
 
+  # --- Prioritization comparison email (added 2026-09-08) ---
+  # A DIAGNOSTIC for the people who tune the scoring, not a briefing: one email showing
+  # only where the two prioritizations disagreed today — sent by the strategy briefing
+  # only, by the ambulatory briefing only, or by both — with each lens's score and the
+  # rationale of the side that passed. It carries no story content; the two briefings
+  # already do. Sent on EVERY run, including quiet days (a side going silent while the
+  # other ships is the finding), and it never touches dedup state.
+  # `profile` names the semantic profile whose group is the right-hand column; it must
+  # match a `name` in profiles.yaml (the whole Ambulatory-* group shares one pass, so any
+  # of the three resolves to the same column).
+  comparison:
+    enabled: true
+    profile: "Ambulatory-Rafic"
+    house_label: "Strategy"
+    profile_label: "Ambulatory"
+    subject_prefix: "Prioritization comparison"
+    recipients:
+      - "wef28@miami.edu"          # Kique
+      - "psharma@miami.edu"        # Pranav
+
   # Deterministic score FLOORS applied after LLM scoring (src/prioritize/scoring.forced_floor,
   # applied in run_briefing.prioritize). A rule fires when a SINGLE sentence of the article
   # (title + summary) contains at least one term from EVERY group in same_sentence_all (OR

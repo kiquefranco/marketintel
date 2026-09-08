@@ -8,6 +8,32 @@ _Last updated: 2026-09-08._
 
 ---
 
+## 2026-09-08 — prioritization comparison email
+
+A third email, to the two people who tune the scoring (Kique, Pranav), answering one question:
+where did the strategy pass and the ambulatory pass disagree today? It is a diagnostic, not a
+briefing — no story content, because the two briefings already carry it.
+
+- **NEW — `src/output/comparison.py`.** Divergence-first layout: three buckets (strategy only /
+  ambulatory only / sent by both), each line carrying BOTH lenses' scores and the rationale of
+  the side that passed on the story, then a titles-only second-tier column per side. Scores show
+  ONE decimal (unlike the reader-facing badge, which truncates) because the near-miss is the
+  point. `--` means that side never scored the article; it never renders as 0.0.
+- **Scope is what was SENT** — tier-1 cards plus the "Also worth noting" tier — not a top-N of
+  the candidate pool.
+- **Fires on every run**, including quiet days: one side going silent while the other ships is
+  itself the finding, and a missing email is indistinguishable from a broken pipeline.
+- **Wiring.** `prioritize_for_profile` returns a 4th value (`pool`, every candidate that pass
+  scored) and keeps `house_composite` on each copy; `_send_semantic_profiles` returns per-group
+  records instead of a bool; `_run_comparison` runs after both sends in the normal AND quiet-day
+  paths, wrapped fail-safe, consuming no dedup state and skipped under `--recipients`.
+- **Config — `briefing.comparison`** in settings.yaml: `enabled`, `profile`
+  (`Ambulatory-Rafic`), labels, `subject_prefix`, `recipients`. A third recipient list on top of
+  `digest_recipients` and the profiles.
+- **Test — `scripts/test_comparison.py`**, offline, no DB/LLM/network.
+
+---
+
 ## 2026-09-08 — no invented addresses
 
 Triggered by the 2026-09-05 briefing: a title-only Florida YIMBY item on construction starting
