@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from datetime import datetime, timezone
 
 from src.llm_client import LLMClient, strip_fences
 
@@ -116,32 +115,6 @@ def save(con: sqlite3.Connection, article_id: int, subscores: dict):
     """Save the shared (org-level) vector, stamped with the current version."""
     con.execute("UPDATE articles SET subscores=?, subscores_version=? WHERE id=?",
                 (json.dumps(subscores), SUBSCORE_VERSION, article_id))
-
-
-def save_for_profile(con: sqlite3.Connection, article_id: int, profile: str,
-                     subscores: dict):
-    """Save a PROFILE-SPECIFIC vector (from a per-profile scoring pass)."""
-    con.execute(
-        "INSERT INTO profile_subscores (article_id, profile, subscores, version, scored_at) "
-        "VALUES (?,?,?,?,?) ON CONFLICT(article_id, profile) DO UPDATE SET "
-        "subscores=excluded.subscores, version=excluded.version, scored_at=excluded.scored_at",
-        (article_id, profile, json.dumps(subscores), SUBSCORE_VERSION,
-         datetime.now(timezone.utc).isoformat()))
-
-
-def load_for_profile(con: sqlite3.Connection, article_id: int, profile: str) -> dict | None:
-    """Current-version profile vector, or None if absent/stale (=> re-score)."""
-    row = con.execute(
-        "SELECT subscores FROM profile_subscores "
-        "WHERE article_id=? AND profile=? AND version=?",
-        (article_id, profile, SUBSCORE_VERSION)).fetchone()
-    return json.loads(row[0]) if row else None
-
-
-def is_current(article: dict) -> bool:
-    """True when the article's stored shared vector is usable as-is."""
-    return bool(article.get("subscores")) and \
-        article.get("subscores_version") == SUBSCORE_VERSION
 
 
 def load_scored(con: sqlite3.Connection) -> list[dict]:

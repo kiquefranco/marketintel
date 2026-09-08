@@ -76,12 +76,6 @@ def semantic_dedupe_track(articles: list, vectors: list, threshold: float,
     return kept, absorbed
 
 
-def semantic_dedupe(articles: list, vectors: list, threshold: float) -> list:
-    """Back-compat wrapper around semantic_dedupe_track (no history, no tracking)."""
-    kept, _ = semantic_dedupe_track(articles, vectors, threshold)
-    return kept
-
-
 def _strip_source_suffix(title: str) -> str:
     """Drop a trailing outlet attribution: "... if Amendment 3 passes - WLRN" -> "... passes".
 
@@ -246,13 +240,6 @@ def dedupe_by_title_track(articles: list, title_threshold: float = 0.90,
         kept_all.append(a)
         kept.append(a)
     return kept, absorbed
-
-
-def dedupe_by_title(articles: list, title_threshold: float = 0.90,
-                    token_overlap: float = 0.6) -> list:
-    """Back-compat wrapper around dedupe_by_title_track (no history, no tracking)."""
-    kept, _ = dedupe_by_title_track(articles, title_threshold, token_overlap)
-    return kept
 
 
 def source_weight(weights: dict, source_name: str) -> float:

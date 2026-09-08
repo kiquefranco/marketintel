@@ -41,11 +41,11 @@ Step-by-step of what the pipeline does each run, and the reasoning behind each c
    stops a high-volume feed from flooding the pool; competitor sources are exempt
    (`uncapped_sources`) so their coverage is never trimmed.
 
-4. **Semantic dedup (`scoring.semantic_dedupe`).** The same event often arrives from several
+4. **Semantic dedup (`scoring.semantic_dedupe_track`).** The same event often arrives from several
    feeds with different wording. We embed each story (Gemini embeddings) and merge ones whose
    *meaning* is near-identical (cosine ≥ `dedup_cosine_similarity`) — keeping the higher-scored
-   copy. This generalizes far better than matching words; a keyword fallback only kicks in if
-   the embedding call fails.
+   copy. This generalizes far better than matching words. The keyword rules then run as a
+   UNION over the survivors (2026-09-01), so a pair the cosine threshold missed is still caught.
 
    *Across days (`store.candidates_recent` / `mark_briefed`):* once a story is briefed it's
    stamped with the time it *first* went out and stays eligible for `rebrief_after_hours`

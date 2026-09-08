@@ -73,12 +73,6 @@ ABBREVIATIONS = {
 }
 
 
-def _md_bold(text: str) -> str:
-    """Escape HTML, then convert **strategic bolding** markers to <b> tags."""
-    out = escape(str(text or ""))
-    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", out)
-
-
 def _abbr_footnotes_html(blob: str) -> str:
     """Footnote block defining every known abbreviation that appears in `blob`."""
     found = []

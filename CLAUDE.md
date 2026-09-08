@@ -105,8 +105,8 @@ Entry point: `run_briefing.py`. Flags: `--dry-run` (build + save, don't send),
   `GET /scouting/tasks/{id}/updates` for findings newer than the stored cursor. Also
   enriches missing publish dates by fetching the article page metadata
   (`enrich_publish_dates`). Auth `X-API-Key`.
-- `src/prioritize/scoring.py` — `composite()`, `semantic_dedupe()` (cosine over
-  embeddings), `dedupe_by_title()` (keyword fallback), and **`forced_floor()`** — the
+- `src/prioritize/scoring.py` — `composite()`, `semantic_dedupe_track()` (cosine over
+  embeddings), `dedupe_by_title_track()` (keyword union), and **`forced_floor()`** — the
   deterministic config-driven score floor (`briefing.forced_floor_rules`; fires when one
   sentence contains a term from every group; never lowers a higher LLM score).
 - `src/prioritize/llm_relevance.py` — batched 0-10 scoring (batch_size 15, max_tokens
