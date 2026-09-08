@@ -23,6 +23,7 @@ AREA_LABELS = {
 BRAND = "#006888"      # primary (titles, section headers, links)
 INK = "#313A45"        # body text
 MUTED = "#6B7480"      # secondary / meta text
+BRAND_TINT = "#E6EEF0"  # pale wash of BRAND, for score chips and pills
 
 # Contacts shown in the feedback footer (same addresses as the test recipient list).
 FEEDBACK_CONTACTS = ["wef28@miami.edu"]
@@ -162,7 +163,7 @@ def render_html(briefing: dict, date_str: str, org_name: str, failing: list[str]
         bg, ontext = AREA_COLORS.get(area, DEFAULT_AREA_COLOR)
         score = _fmt_score(s.get("llm_score"))
         score_badge = (
-            f'<span style="background:#E6EEF0;color:{BRAND};font-size:10px;font-weight:bold;'
+            f'<span style="background:{BRAND_TINT};color:{BRAND};font-size:10px;font-weight:bold;'
             f'padding:1px 7px;border-radius:10px;white-space:nowrap">Relevance {score}/10</span>'
         ) if score else ""
         chip = (
@@ -359,7 +360,7 @@ def _runners_html(runners: list[dict] | None) -> str:
         return ""
     rows = [
         '<div style="margin-top:30px;border-top:1px solid #ddd;padding-top:14px">'
-        '<p style="color:#1F3864;font-size:13px;font-weight:bold;margin:0 0 8px">'
+        f'<p style="color:{BRAND};font-size:13px;font-weight:bold;margin:0 0 8px">'
         'Also worth noting</p>'
     ]
     for a in runners:
@@ -371,7 +372,7 @@ def _runners_html(runners: list[dict] | None) -> str:
         title = escape(str(a.get("title", "")))
         rows.append(
             f'<p style="margin:5px 0;font-size:13px">'
-            f'<a href="{url}" style="color:#1F3864">{title}</a>{tag}{src_txt}</p>'
+            f'<a href="{url}" style="color:{BRAND}">{title}</a>{tag}{src_txt}</p>'
         )
     rows.append("</div>")
     return "".join(rows)
@@ -458,8 +459,8 @@ def render_digest_html(stories: list[dict], date_str: str, org_short: str,
 
     parts = [
         '<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;'
-        'color:#222;font-size:14px;line-height:1.5">',
-        f'<p style="color:#1F3864;font-size:15px;font-weight:bold;margin:0 0 4px">'
+        f'color:{INK};font-size:14px;line-height:1.5">',
+        f'<p style="color:{BRAND};font-size:15px;font-weight:bold;margin:0 0 4px">'
         f'Market Intelligence Briefing — {escape(date_str)}</p>',
     ]
     for s in stories[:top_n]:
@@ -475,7 +476,7 @@ def render_digest_html(stories: list[dict], date_str: str, org_short: str,
                            else s.get("llm_score"))
         score_html = (
             f'<span style="font-size:13px;color:#6b7a90;font-weight:normal;white-space:nowrap">'
-            f'&nbsp;&nbsp;<span style="background:#EAF0F8;color:#1F3864;padding:1px 7px;'
+            f'&nbsp;&nbsp;<span style="background:{BRAND_TINT};color:{BRAND};padding:1px 7px;'
             f'border-radius:10px">LLM relevance {score}/10</span></span>'
         ) if score else ""
         # Background line (earlier reporting) — rendered ONLY when the story has a history.
@@ -485,7 +486,7 @@ def render_digest_html(stories: list[dict], date_str: str, org_short: str,
         if ac.get("summary"):
             def _links(items):
                 return " &nbsp;·&nbsp; ".join(
-                    f'<a href="{escape(r.get("url",""))}" style="color:#1F3864">'
+                    f'<a href="{escape(r.get("url",""))}" style="color:{BRAND}">'
                     f'{escape((r.get("title") or "source")[:80])}</a>'
                     f'{(" (" + escape(r["date"]) + ")") if r.get("date") else ""}'
                     for r in (items or []) if r.get("url"))
@@ -499,10 +500,10 @@ def render_digest_html(stories: list[dict], date_str: str, org_short: str,
                 + '</p>')
         parts.append(
             f'<p style="margin:26px 0 2px">'
-            f'<span style="background:#1F3864;color:#fff;font-size:11px;font-weight:bold;'
+            f'<span style="background:{BRAND};color:#fff;font-size:11px;font-weight:bold;'
             f'padding:2px 8px;border-radius:3px;letter-spacing:.03em">{escape(area_label)}</span>'
             f'<span style="color:#888;font-size:12px">&nbsp;&nbsp;{escape(src)}</span></p>'
-            f'<h2 style="font-size:21px;color:#1F3864;margin:2px 0 8px">'
+            f'<h2 style="font-size:21px;color:{BRAND};margin:2px 0 8px">'
             f'{escape(s.get("title", ""))}{score_html}</h2>'
             f'<p style="margin:5px 0 2px"><b>What happened:</b></p>'
             + _bullets_html(s.get("what_happened"))
@@ -514,7 +515,7 @@ def render_digest_html(stories: list[dict], date_str: str, org_short: str,
                f'{escape(s.get("watch_next", ""))}</p>' if show_consider else "")
             + f'{ac_html}'
             f'<p style="margin:5px 0"><b>Supporting coverage:</b> '
-            f'<a href="{url}" style="color:#1F3864">{escape(label)}</a></p>'
+            f'<a href="{url}" style="color:{BRAND}">{escape(label)}</a></p>'
             f'<p style="margin:5px 0;color:#666;font-size:12px">'
             f'Captured: {captured} &nbsp;·&nbsp; Published: {published}</p>'
         )
@@ -537,10 +538,10 @@ def render_quiet_html(date_str: str, org_name: str, lookback_hours: int,
     days = max(1, round(lookback_hours / 24))
     parts = [
         '<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;'
-        'color:#222;font-size:14px;line-height:1.5">',
+        f'color:{INK};font-size:14px;line-height:1.5">',
         (f'<p style="font-size:12px;margin:0 0 3px">Good morning {escape(greeting)},</p>'
          if greeting else ''),
-        f'<p style="color:#1F3864;font-size:15px;font-weight:bold;margin:0 0 8px">'
+        f'<p style="color:{BRAND};font-size:15px;font-weight:bold;margin:0 0 8px">'
         f'Market Intelligence Briefing — {escape(date_str)}</p>',
         f'<p>No developments cleared the relevance threshold over the past {days} days — '
         f'nothing material to report this morning for {escape(org_name)}.</p>',
