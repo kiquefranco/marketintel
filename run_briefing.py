@@ -584,9 +584,18 @@ def _deliver_to_profiles(profs: list[dict], subject: str, render, dry_run: bool,
     `render(greeting) -> html` supplies the per-path body. `label`/`detail` reproduce
     each path's log wording exactly. Returns True if at least one real email was sent,
     so a caller can gate its own mark_briefed on a real send.
+
+    ONE BAD ADDRESS MUST NOT TAKE THE RUN DOWN (2026-09-10). The send used to be
+    unguarded, so an SMTP rejection on any single recipient raised straight out of
+    main() — killing the remaining profiles, the semantic-profile briefings, the
+    comparison email and the mark_briefed stamp with it. The failure is per recipient,
+    so it is handled per recipient: log it and keep going. If EVERY send fails this
+    still returns False, so nothing is marked briefed, the watchdog alerts, and the
+    next run retries the same stories.
     """
     smtp_ready = _smtp_ready()
     sent_any = False
+    failed: list[str] = []
     for p in profs:
         greeting = p.get("display_name") or p.get("name", "")
         html = render(greeting)
@@ -596,9 +605,18 @@ def _deliver_to_profiles(profs: list[dict], subject: str, render, dry_run: bool,
             log.info("%s for %s saved%s%s.", label, p.get("name"), detail,
                      " (dry run)" if dry_run else " but NOT sent (SMTP not ready / no email)")
             continue
-        emailer.send(html, subject, _smtp_cfg([p["email"]]), subtype="html")
+        try:
+            emailer.send(html, subject, _smtp_cfg([p["email"]]), subtype="html")
+        except Exception as exc:
+            failed.append(p.get("name") or p["email"])
+            log.error("%s NOT sent to %s <%s>: %s — continuing with the other recipients.",
+                      label, p.get("name"), p["email"], exc)
+            continue
         log.info("%s%s emailed to %s <%s>", label, detail, p.get("name"), p["email"])
         sent_any = True
+    if failed:
+        log.error("%s: %d of %d recipient(s) failed to send: %s",
+                  label, len(failed), len(profs), ", ".join(failed))
     return sent_any
 
 
