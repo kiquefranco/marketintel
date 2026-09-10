@@ -23,7 +23,7 @@ from .emailer import (AREA_COLORS, AREA_LABELS, BRAND, BRAND_TINT, DEFAULT_AREA_
 # Divergence colours: one hue per "only this side" bucket, shared items stay neutral.
 HOUSE_ACCENT = "#F47321"    # orange — strategy-only
 PROF_ACCENT = "#005030"     # green  — ambulatory-only
-SHARED_ACCENT = "#006888"   # teal   — both
+SHARED_ACCENT = BRAND       # teal   — both (the shared briefing's own colour)
 
 
 def _score10(value) -> str:
