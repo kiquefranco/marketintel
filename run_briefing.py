@@ -149,6 +149,46 @@ def _force_competitor_area(con, rows: list, bcfg: dict) -> int:
     return moved
 
 
+def _two_tier_select(rows: list[dict], *, score_key: str, select_threshold: float,
+                     min_stories: int, max_stories: int, secondary_floor: float,
+                     floor_by_area: dict, secondary_max: int
+                     ) -> tuple[list[dict], list[dict], list[dict]]:
+    """Split a ranked candidate list into the briefing's two tiers.
+
+    Tier 1 (`final`, full story cards): every row at/above `select_threshold`, capped at
+    `max_stories`. NO PADDING — with min_stories 0 a quiet day simply yields a shorter
+    briefing. The old behaviour (pad to min_stories from the score_threshold floor)
+    discarded the bar entirely on quiet days and shipped 5.5/10 filler that rendered
+    identically to a real top story. Padding stays available by raising min_stories.
+
+    Tier 2 (`runners`, "Also worth noting" — compact headline+link+score): the band
+    between the per-area secondary floor and the bar, capped at `secondary_max`. The
+    floor is PER AREA: a competitor hire earns a glance at 6.0, while a national/payer/
+    AI/reputation item has to beat 7.0 for the same space. One flat floor filled the
+    section with the general trend pieces the strategy team consistently rejects.
+
+    `rows` must already be sorted desc on `score_key`; `final` is its prefix, so tier 2
+    is simply the next slice. Also returns `strong` (everything above the bar before the
+    max_stories cap) because both callers log its length.
+
+    One copy for BOTH prioritization passes: the shared briefing and the semantic-profile
+    briefing are required to share this format, and a single function makes that
+    structural rather than a matter of remembering to edit two places. Callers still
+    resolve their own config values and pass them in, so each pass keeps its own
+    threshold and fallbacks.
+    """
+    strong = [a for a in rows if a[score_key] >= select_threshold]
+    final = strong[:max_stories]
+    if len(final) < min_stories:          # opt-in padding; min_stories 0 == never pads
+        final = rows[:min_stories]
+
+    def _sec_floor(a) -> float:
+        return float(floor_by_area.get(a.get("area"), secondary_floor))
+    runners = [a for a in rows[len(final):]
+               if a[score_key] >= _sec_floor(a)][:secondary_max]
+    return final, runners, strong
+
+
 def prioritize(con, cfg, client, use_llm: bool) -> tuple[list[dict], list[dict], dict, list[dict]]:
     settings, weights = cfg["settings"], cfg["weights"]
     now = datetime.now(timezone.utc)
@@ -350,19 +390,11 @@ def prioritize(con, cfg, client, use_llm: bool) -> tuple[list[dict], list[dict],
     secondary_floor = bcfg.get("secondary_floor", 60)
     floor_by_area = bcfg.get("secondary_floor_by_area") or {}
     secondary_max = bcfg.get("secondary_max", 6)
-    strong = [a for a in kept if a["composite_score"] >= select_threshold]
-    final = strong[:max_stories]
-    if len(final) < min_stories:          # opt-in padding; min_stories 0 == never pads
-        final = kept[:min_stories]
-
-    # Tier 2 admission is PER AREA. A competitor hire or promotion earns a glance at 6.0;
-    # a national/payer/AI/reputation item has to beat 7.0 for the same space. One flat floor
-    # filled the section with the general trend pieces the strategy team consistently
-    # rejects, while the local competitor items they explicitly wanted sat at the same score.
-    def _sec_floor(a) -> float:
-        return float(floor_by_area.get(a.get("area"), secondary_floor))
-    runners = [a for a in kept[len(final):]
-               if a["composite_score"] >= _sec_floor(a)][:secondary_max]
+    final, runners, strong = _two_tier_select(
+        kept, score_key="composite_score", select_threshold=select_threshold,
+        min_stories=min_stories, max_stories=max_stories,
+        secondary_floor=secondary_floor, floor_by_area=floor_by_area,
+        secondary_max=secondary_max)
     log.info("Prioritization: %d scored, %d above floor(%s), %d after dedup, %d at/above %s "
              "-> %d selected (min %d / max %d), %d also-worth-noting (floor %s)",
              len(to_score), before, weights["score_threshold"], len(kept),
@@ -753,15 +785,11 @@ def prioritize_for_profile(con, cfg, client, profile: dict, scored_pool: list[di
     floor_by_area = bcfg.get("secondary_floor_by_area") or {}
     secondary_max = int(bcfg.get("secondary_max", 6))
 
-    strong = [a for a in deduped if a["personal_composite"] >= select_threshold]
-    final = strong[:max_stories]
-    if len(final) < min_stories:          # opt-in padding; min_stories 0 == never pads
-        final = deduped[:min_stories]
-
-    def _sec_floor(a) -> float:
-        return float(floor_by_area.get(a.get("area"), secondary_floor))
-    runners = [a for a in deduped[len(final):]
-               if a["personal_composite"] >= _sec_floor(a)][:secondary_max]
+    final, runners, strong = _two_tier_select(
+        deduped, score_key="personal_composite", select_threshold=select_threshold,
+        min_stories=min_stories, max_stories=max_stories,
+        secondary_floor=secondary_floor, floor_by_area=floor_by_area,
+        secondary_max=secondary_max)
 
     log.info("%s: %d candidates scored, %d at/above pool floor %s, %d after dedup, "
              "%d at/above %s -> %d selected (max %d), %d also-worth-noting.",
