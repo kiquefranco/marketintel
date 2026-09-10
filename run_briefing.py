@@ -149,6 +149,78 @@ def _force_competitor_area(con, rows: list, bcfg: dict) -> int:
     return moved
 
 
+def _dedupe_against_history(rows: list[dict], *, con, bcfg: dict, weights: dict,
+                            client, now, allow_semantic: bool = True,
+                            label: str = "", verbose: bool = False
+                            ) -> tuple[list[dict], list, list[dict]]:
+    """Collapse same-event duplicates in `rows`, against BOTH today's pool and the
+    recently-BRIEFED history. Returns (deduped, absorbed, history).
+
+    Primary pass is semantic (embedding cosine); the keyword rules then run as a UNION
+    over the survivors, and are the sole pass if embeddings are unavailable. Two
+    sent-briefing repeats drove this design:
+      * HISTORY SEED (2026-07-24) — Baptist's $100M gift (briefed 6/15) was re-reported
+        by another outlet 5 weeks later under a fresh URL + publish date and re-briefed.
+        URL-hash dedup cannot see that, so candidates are matched against everything
+        briefed in the last dedup_history_days; a match means "already shown" and the
+        candidate is dropped. History rows are passed as pre-kept SEEDS, so they are
+        never returned among the survivors.
+      * ABSORPTION TRACKING — Cleveland Clinic's $25M gift arrived twice on 7/23 from two
+        sources; dedup dropped one copy but only the SURVIVOR was marked briefed, so the
+        dropped copy resurfaced solo the next morning. `absorbed` is the list of
+        (dropped, absorber) pairs callers use to stamp both together.
+      * UNION, NOT FALLBACK (2026-09-01) — the keyword rules were only ever reached when
+        embeddings failed, so a pair the cosine threshold missed shipped twice even
+        though the cheap local test would have caught it (the two Amendment 3 stories of
+        2026-08-28). Running the keyword pass over the semantic SURVIVORS costs nothing
+        (local, no API) and can only remove duplicates the primary pass already kept.
+
+    One copy for BOTH prioritization passes. Callers keep what genuinely differs: the
+    sort key, the absorbed-map keying, and their own log wording (`label`/`verbose`).
+    """
+    hist_days = bcfg.get("dedup_history_days", 60)
+    pool_ids = {a["id"] for a in rows}
+    history: list[dict] = []
+    if hist_days:
+        hist_floor = (now - timedelta(days=hist_days)).isoformat()
+        # Exclude the current pool itself: on a same-day re-run, today's already-briefed
+        # stories are BOTH candidates and history — they must not suppress themselves.
+        history = [dict(r) for r in store.briefed_recent(con, hist_floor)
+                   if r["id"] not in pool_ids]
+
+    kw_args = (weights.get("dedup_title_similarity", 0.90),
+               weights.get("dedup_token_overlap", 0.6))
+    deduped, absorbed = None, []
+    if allow_semantic and client and rows and (len(rows) > 1 or history):
+        try:
+            texts = [f'{a["title"]} {(a.get("summary") or "")[:400]}' for a in rows + history]
+            vecs = client.embed(texts)
+            deduped, absorbed = scoring.semantic_dedupe_track(
+                rows, vecs[:len(rows)], weights.get("dedup_cosine_similarity", 0.85),
+                seed=history, seed_vectors=vecs[len(rows):])
+            if verbose:
+                log.info("Dedup: semantic (embeddings), vs %d briefed history stories",
+                         len(history))
+        except Exception as exc:
+            if label:
+                log.warning("%s: embedding dedup failed (%s); falling back to keyword dedup",
+                            label, exc)
+            else:
+                log.warning("Embedding dedup failed (%s); falling back to keyword dedup", exc)
+    if deduped is None:
+        deduped, absorbed = scoring.dedupe_by_title_track(rows, *kw_args, seed=history)
+        if verbose:
+            log.info("Dedup: keyword fallback, vs %d briefed history stories", len(history))
+    else:
+        kw_kept, kw_absorbed = scoring.dedupe_by_title_track(deduped, *kw_args, seed=history)
+        if verbose and kw_absorbed:
+            for dropped, absorber in kw_absorbed:
+                log.info("Dedup: keyword pass caught %r as a duplicate of %r",
+                         str(dropped.get("title", ""))[:70], str(absorber.get("title", ""))[:70])
+        deduped, absorbed = kw_kept, list(absorbed) + kw_absorbed
+    return deduped, absorbed, history
+
+
 def _two_tier_select(rows: list[dict], *, score_key: str, select_threshold: float,
                      min_stories: int, max_stories: int, secondary_floor: float,
                      floor_by_area: dict, secondary_max: int
@@ -304,59 +376,11 @@ def prioritize(con, cfg, client, use_llm: bool) -> tuple[list[dict], list[dict],
     con.commit()
 
     kept.sort(key=lambda a: a["composite_score"], reverse=True)
-    # Collapse same-event duplicates — against BOTH today's pool and recently-BRIEFED history.
-    # Primary: semantic (embedding) similarity; fallback: keyword rules if embeddings are
-    # unavailable (no key / API error). Two sent-briefing repeats drove the design (2026-07-24):
-    #  * HISTORY SEED — Baptist's $100M gift (briefed 6/15) was re-reported by another outlet
-    #    5 weeks later under a fresh URL + publish date and re-briefed. URL-hash dedup can't
-    #    see that, so candidates are also matched against everything briefed in the last
-    #    dedup_history_days; a match means "already shown" and the candidate is dropped.
-    #  * ABSORPTION TRACKING — Cleveland Clinic's $25M gift arrived twice on 7/23 from two
-    #    sources; dedup dropped one copy but only the SURVIVOR was marked briefed, so the
-    #    dropped copy resurfaced solo the next morning. The absorbed map lets main() stamp
-    #    dropped duplicates as briefed together with their surviving copy.
-    hist_days = settings["briefing"].get("dedup_history_days", 60)
     pool_ids = {a["id"] for a in kept}
-    history = []
-    if hist_days:
-        hist_floor = (now - timedelta(days=hist_days)).isoformat()
-        # Exclude the current pool itself: on a same-day re-run, today's already-briefed
-        # stories are BOTH candidates and history — they must not suppress themselves.
-        history = [dict(r) for r in store.briefed_recent(con, hist_floor)
-                   if r["id"] not in pool_ids]
     before = len(kept)
-    deduped = absorbed = None
-    if use_llm and client and kept and (len(kept) > 1 or history):
-        try:
-            texts = [f'{a["title"]} {(a.get("summary") or "")[:400]}' for a in kept + history]
-            vecs = client.embed(texts)
-            deduped, absorbed = scoring.semantic_dedupe_track(
-                kept, vecs[:len(kept)], weights.get("dedup_cosine_similarity", 0.85),
-                seed=history, seed_vectors=vecs[len(kept):])
-            log.info("Dedup: semantic (embeddings), vs %d briefed history stories", len(history))
-        except Exception as exc:
-            log.warning("Embedding dedup failed (%s); falling back to keyword dedup", exc)
-    if deduped is None:
-        deduped, absorbed = scoring.dedupe_by_title_track(
-            kept, weights.get("dedup_title_similarity", 0.90),
-            weights.get("dedup_token_overlap", 0.6), seed=history)
-        log.info("Dedup: keyword fallback, vs %d briefed history stories", len(history))
-    else:
-        # UNION, NOT FALLBACK (2026-09-01). The keyword rules were only ever reached when
-        # embeddings failed — so a pair the cosine threshold missed shipped twice even
-        # though the cheap local test would have caught it. Two outlets covering one policy
-        # story share few words but the same named measure, and the two Amendment 3 stories
-        # of 2026-08-28 rode that gap into both tiers of the same briefing.
-        # Running the keyword pass over the semantic SURVIVORS costs nothing (local, no API)
-        # and can only remove duplicates the primary pass already kept.
-        kw_kept, kw_absorbed = scoring.dedupe_by_title_track(
-            deduped, weights.get("dedup_title_similarity", 0.90),
-            weights.get("dedup_token_overlap", 0.6), seed=history)
-        if kw_absorbed:
-            for dropped, absorber in kw_absorbed:
-                log.info("Dedup: keyword pass caught %r as a duplicate of %r",
-                         str(dropped.get("title", ""))[:70], str(absorber.get("title", ""))[:70])
-        deduped, absorbed = kw_kept, list(absorbed) + kw_absorbed
+    deduped, absorbed, _history = _dedupe_against_history(
+        kept, con=con, bcfg=settings["briefing"], weights=weights, client=client,
+        now=now, allow_semantic=use_llm, verbose=True)
     kept = deduped
     kept.sort(key=lambda a: a["composite_score"], reverse=True)  # dedup may reorder
 
@@ -763,36 +787,12 @@ def prioritize_for_profile(con, cfg, client, profile: dict, scored_pool: list[di
                  profile["name"], len(pool), pool_floor)
         return [], [], {}, pool
 
-    # 3. Dedup against today's own duplicates AND recently-briefed history — same
-    #    embeddings-primary / keyword-union approach as prioritize().
+    # 3. Dedup against today's own duplicates AND recently-briefed history — the SAME
+    #    helper the shared pass uses, so the two can never drift apart.
     now = datetime.now(timezone.utc)
-    hist_days = bcfg.get("dedup_history_days", 60)
-    pool_ids = {a["id"] for a in above}
-    history = []
-    if hist_days:
-        hist_floor = (now - timedelta(days=hist_days)).isoformat()
-        history = [dict(r) for r in store.briefed_recent(con, hist_floor)
-                   if r["id"] not in pool_ids]
-    deduped, absorbed = None, []
-    if client and (len(above) > 1 or history):
-        try:
-            texts = [f'{a["title"]} {(a.get("summary") or "")[:400]}' for a in above + history]
-            vecs = client.embed(texts)
-            deduped, absorbed = scoring.semantic_dedupe_track(
-                above, vecs[:len(above)], weights.get("dedup_cosine_similarity", 0.85),
-                seed=history, seed_vectors=vecs[len(above):])
-        except Exception as exc:
-            log.warning("%s: embedding dedup failed (%s); falling back to keyword dedup",
-                        profile["name"], exc)
-    if deduped is None:
-        deduped, absorbed = scoring.dedupe_by_title_track(
-            above, weights.get("dedup_title_similarity", 0.90),
-            weights.get("dedup_token_overlap", 0.6), seed=history)
-    else:
-        kw_kept, kw_absorbed = scoring.dedupe_by_title_track(
-            deduped, weights.get("dedup_title_similarity", 0.90),
-            weights.get("dedup_token_overlap", 0.6), seed=history)
-        deduped, absorbed = kw_kept, list(absorbed) + kw_absorbed
+    deduped, absorbed, _history = _dedupe_against_history(
+        above, con=con, bcfg=bcfg, weights=weights, client=client, now=now,
+        label=profile["name"])
     deduped.sort(key=lambda a: a["personal_composite"], reverse=True)
 
     # 4. TWO-TIER SELECTION — identical shape and config keys to prioritize().
