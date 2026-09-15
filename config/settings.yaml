@@ -48,6 +48,17 @@ briefing:
   # simply not rendered in the main email, the text digest, or the HTML digest.
   show_consider_section: false
 
+  # ===== TEMPORARY -- LAYERED AMBULATORY BRIEFING (added 2026-09-15) =====
+  # true  = the ambulatory-leadership email is the STRATEGY briefing plus the stories the
+  #         ambulatory lens picked, merged into one list ranked by each story's own score.
+  #         Strategy cards are reused verbatim; nothing is re-synthesized.
+  # false = the ambulatory briefing goes back to being fully standalone (the original
+  #         behavior). Deleting this key does the same thing -- the code default is OFF.
+  # This is a STOPGAP, not the intended end state. See the TEMPORARY block above
+  # _send_semantic_profiles in run_briefing.py for what to delete when it is retired.
+  ambulatory_layered_briefing: true
+
+
   # Extra scoring direction injected into the LLM relevance prompt (tune freely, no code change).
   # Frame (2026-06-17): EXEC-facing — score by IMPACT ON UHEALTH'S STRATEGY & LONG-TERM DIRECTION,
   # fusing external competitive intel with operational/financial/strategic impact. Grounded in

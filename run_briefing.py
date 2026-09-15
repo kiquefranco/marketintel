@@ -901,8 +901,97 @@ def _synthesize_for_profile(client, cfg, models, label: str, final: list[dict]):
     return briefing, final
 
 
+# ===========================================================================
+# TEMPORARY -- LAYERED AMBULATORY BRIEFING
+# ===========================================================================
+# WHAT THIS DOES: the ambulatory-leadership email stopped being a standalone
+# briefing and became "the strategy briefing PLUS the stories the ambulatory
+# lens picked". The strategy cards are reused VERBATIM -- same topline, same
+# write-up, same house score badge -- and the ambulatory-only cards are merged
+# in beside them, one list ranked by each story's OWN score (house score for a
+# house card, ambulatory score for an ambulatory card). The takeaways and
+# key-question answers stay the strategy briefing's; nothing is re-synthesized,
+# so this costs no extra LLM calls.
+#
+# WHERE IT LIVES: the SYNTHESIS/ASSEMBLY step only. Both prioritization passes
+# are untouched, and so is the prioritization-comparison email -- that diff is
+# still strategy-vs-ambulatory on each pass's OWN picks, which is the whole
+# point of it as a scoring dev tool.
+#
+# THIS IS NOT MEANT TO BE PERMANENT. It is a stopgap for the ambulatory
+# leadership distribution while the two lenses are being reconciled. When that
+# is settled, DELETE this block, delete the layering call in
+# _send_semantic_profiles, delete the strategy-only fallback there, drop the
+# house_briefing/house_runners plumbing from _send_semantic_profiles and
+# _run_semantic_pass and their two call sites in main(), and remove
+# briefing.ambulatory_layered_briefing from config/settings.yaml. The ambulatory
+# briefing then goes back to being fully independent, which is what every other
+# part of this pipeline still assumes.
+#
+# KILL SWITCH: briefing.ambulatory_layered_briefing in config/settings.yaml.
+# Set it to false (or delete the key -- the code default is OFF) and the
+# ambulatory pass reverts to its old standalone behavior with no code change.
+# ===========================================================================
+def _layered_enabled(settings) -> bool:
+    """TEMPORARY (see the block above). Default OFF in code on purpose: dropping the
+    settings.yaml key is a complete revert."""
+    return bool(settings["briefing"].get("ambulatory_layered_briefing", False))
+
+
+def _story_score(s: dict) -> float:
+    """Each item's OWN 0-10 relevance -- the house number on a house card, the
+    ambulatory number on an ambulatory card. Both passes write it to llm_score
+    (prioritize_for_profile deliberately overwrites it with the personal composite so
+    the badge matches the tier), so one sort key ranks the merged list correctly."""
+    try:
+        return float(s.get("llm_score"))
+    except (TypeError, ValueError):
+        return -1.0
+
+
+def _layer_house_onto_profile(house_briefing: dict | None, house_runners: list[dict] | None,
+                              prof_briefing: dict, prof_runners: list[dict] | None):
+    """TEMPORARY (see the block above). Return (briefing, runners) for the ambulatory
+    send: the strategy briefing with the ambulatory-only cards merged in.
+
+    - Strategy cards are copied through untouched; a story BOTH passes picked appears
+      once, in its strategy form (dedup is on the canonical DB url, since the `id` on a
+      reconciled story is only an index into its own pass's list).
+    - Takeaways, key-question answers, watch and actions stay the strategy briefing's.
+    - "Also worth noting" is the union of both tiers, deduped, minus anything that is a
+      story card in the merged list -- otherwise an item the ambulatory lens promoted to
+      a card would ALSO show up as a strategy tier-2 line in the same email.
+    """
+    if not house_briefing or not house_briefing.get("stories"):
+        return prof_briefing, prof_runners      # house quiet: ambulatory-only, as before
+
+    house_stories = list(house_briefing["stories"])
+    seen = {emailer._norm_url(s.get("url", "")) for s in house_stories}
+    extra = [s for s in (prof_briefing or {}).get("stories", [])
+             if emailer._norm_url(s.get("url", "")) not in seen]
+
+    merged = dict(house_briefing)
+    merged["stories"] = sorted(house_stories + extra, key=_story_score, reverse=True)
+
+    story_urls = {emailer._norm_url(s.get("url", "")) for s in merged["stories"]}
+    out, seen_r = [], set()
+    for a in list(house_runners or []) + list(prof_runners or []):
+        u = emailer._norm_url(a.get("url", ""))
+        if u in story_urls or u in seen_r:
+            continue
+        seen_r.add(u)
+        out.append(a)
+    out.sort(key=_story_score, reverse=True)
+
+    log.info("Layered ambulatory briefing: %d strategy card(s) + %d ambulatory-only = %d, "
+             "%d also-worth-noting.", len(house_stories), len(extra),
+             len(merged["stories"]), len(out))
+    return merged, out
+
+
 def _send_semantic_profiles(con, cfg, client, use_llm, scored_pool, date_h, dry_run,
-                            run_date, out_dir) -> list[dict]:
+                            run_date, out_dir, house_briefing=None,
+                            house_runners=None) -> list[dict]:
     """Ambulatory Leadership Prioritization (2026-09-02): the delivery half of the second
     prioritization pass, for every ACTIVE profile that defines a role_description.
 
@@ -944,6 +1033,7 @@ def _send_semantic_profiles(con, cfg, client, use_llm, scored_pool, date_h, dry_
     subject = f'{settings["briefing"]["subject_prefix"]} — {date_h}'
     failing = store.failing_sources(con)
     show_consider = settings["briefing"].get("show_consider_section", True)
+    layered = _layered_enabled(settings)      # TEMPORARY -- see the block above
     results: list[dict] = []
 
     for members in groups.values():
@@ -959,6 +1049,20 @@ def _send_semantic_profiles(con, cfg, client, use_llm, scored_pool, date_h, dry_
             # No padding, same as the shared briefing. (A role-quiet day with only tier-2
             # items sends nothing — render_quiet_html has no greeting, and a profile
             # briefing without one would be a third format.)
+            # TEMPORARY (layered ambulatory briefing): the strategy briefing is now the
+            # BASE of this email, so a role-quiet day is no longer a no-send — the group
+            # still gets the strategy briefing on its own. No mark_briefed here: these are
+            # the house pass's stories and it stamps them itself. No comparison record
+            # either, so that dev email reports exactly what it did before.
+            if layered and house_briefing and house_briefing.get("stories"):
+                _deliver_to_profiles(
+                    members, subject,
+                    lambda greeting: emailer.render_html(
+                        house_briefing, date_h, org_name, failing, greeting=greeting,
+                        runners=house_runners, show_consider=show_consider),
+                    dry_run, run_date, out_dir, "Profile briefing (strategy only)",
+                    detail=f' ({len(house_briefing.get("stories", []))} stories, '
+                           f'no ambulatory-specific picks today)')
             continue        # prioritize_for_profile already logged why
 
         briefing, final = _synthesize_for_profile(client, cfg, models, label, final)
@@ -970,13 +1074,21 @@ def _send_semantic_profiles(con, cfg, client, use_llm, scored_pool, date_h, dry_
         except Exception as exc:
             log.warning("%s: additional-context step skipped (%s)", label, exc)
 
+        # TEMPORARY (layered ambulatory briefing): what gets SENT is the strategy
+        # briefing with these cards merged in. `briefing`/`runners` stay the pure
+        # ambulatory result, which is what the comparison email is handed below.
+        send_briefing, send_runners = briefing, runners
+        if layered:
+            send_briefing, send_runners = _layer_house_onto_profile(
+                house_briefing, house_runners, briefing, runners)
+
         group_sent = _deliver_to_profiles(
             members, subject,
-            lambda greeting: emailer.render_html(briefing, date_h, org_name, failing,
-                                                 greeting=greeting, runners=runners,
+            lambda greeting: emailer.render_html(send_briefing, date_h, org_name, failing,
+                                                 greeting=greeting, runners=send_runners,
                                                  show_consider=show_consider),
             dry_run, run_date, out_dir, "Profile briefing",
-            detail=f' ({len(briefing.get("stories", []))} stories)')
+            detail=f' ({len(send_briefing.get("stories", []))} stories)')
         results.append({"members": members, "label": label, "rep": rep,
                         "cards": final, "runners": runners, "pool": pool,
                         "sent": group_sent})
@@ -995,7 +1107,8 @@ def _send_semantic_profiles(con, cfg, client, use_llm, scored_pool, date_h, dry_
 
 
 def _run_semantic_pass(con, cfg, client, use_llm, scored_pool, date_h, dry_run,
-                       run_date, out_dir, recipients_override) -> list[dict]:
+                       run_date, out_dir, recipients_override, house_briefing=None,
+                       house_runners=None) -> list[dict]:
     """Fail-safe entry point for the semantic-profile pass.
 
     Called from BOTH delivery paths — the normal one and the quiet-day one — so these
@@ -1008,7 +1121,9 @@ def _run_semantic_pass(con, cfg, client, use_llm, scored_pool, date_h, dry_run,
         return []
     try:
         return _send_semantic_profiles(con, cfg, client, use_llm, scored_pool, date_h,
-                                       dry_run, run_date, out_dir)
+                                       dry_run, run_date, out_dir,
+                                       house_briefing=house_briefing,
+                                       house_runners=house_runners)
     except Exception as exc:
         log.error("Semantic-profile pass failed (%s) — the shared briefing is unaffected.",
                   exc)
@@ -1302,8 +1417,11 @@ def main():
     # re-scored against their own role_description over the SAME scored_pool — one
     # ingestion, one house-scoring pass, two prioritizations. Runs after the shared send
     # so overlapping stories inherit its deep-dive enrichment.
+    # house_briefing/house_runners: TEMPORARY layered-ambulatory plumbing — the semantic
+    # pass merges these strategy cards into the ambulatory send. Remove with that block.
     records = _run_semantic_pass(con, cfg, client, use_llm, scored_pool, date_h,
-                                 args.dry_run, run_date, out_dir, args.recipients)
+                                 args.dry_run, run_date, out_dir, args.recipients,
+                                 house_briefing=briefing, house_runners=runners)
 
     # Prioritization comparison (2026-09-08): a scoring diagnostic for the people who tune
     # the profiles, showing only where the two passes disagreed. Sent after both briefings
