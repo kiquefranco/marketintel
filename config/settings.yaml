@@ -762,6 +762,7 @@ briefing:
     recipients:
       - "wef28@miami.edu"          # Kique
       - "psharma@miami.edu"        # Pranav
+      - "afa138@med.miami.edu"     # Ahmed — added 2026-10-15 (med.miami.edu domain)
 
   # Deterministic score FLOORS applied after LLM scoring (src/prioritize/scoring.forced_floor,
   # applied in run_briefing.prioritize). A rule fires when a SINGLE sentence of the article
